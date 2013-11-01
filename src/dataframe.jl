@@ -1678,35 +1678,24 @@ end
 ## Sorting
 ##############################################################################
 
-## import Sort.sort, Sort.sortby, Sort.By, 
-##        Sort.sort!, Sort.sortby!,
-##        Sort.Algorithm, Sort.Ordering, 
-##        Sort.lt, Sort.Perm, Sort.Forward
 
-typealias ColIndexVec Union(AbstractVector{Integer}, AbstractVector{ASCIIString}, AbstractVector{UTF8String}, AbstractVector{Symbol})
-
-const DF_STABLE_SORT = SortingAlgorithms.TimSort
+defalg(df::AbstractDataFrame) = SortingAlgorithms.TimSort
 
 # Permute indices according to the ordering of the given dataframe columns
-type DFPerm{O<:Base.Sort.Ordering,DF<:AbstractDataFrame} <: Ordering
-    ords::AbstractVector{O}
+type DFPerm{O<:Ordering, V<:AbstractVector,DF<:AbstractDataFrame} <: Ordering
+    ords::V
     df::DF
 end
 
-function DFPerm{O<:Base.Sort.Ordering}(o::AbstractVector{O}, df::AbstractDataFrame)
-    o_cols = length(o)
-    df_cols = ncols(df)
-    if o_cols > df_cols
-        error("DFPerm: number of column orderings is greater than the number of columns")
+function DFPerm{O<:Ordering}(ords::AbstractVector{O}, df::AbstractDataFrame)
+    if length(ords) != ncol(df)
+        error("DFPerm: number of column orderings does not equal the number of DataFrame columns")
     end
-    if o_cols < df_cols
-        o = cat(1, o, fill(Base.Sort.Forward, df_cols-o_cols))
-    end
-    DFPerm{O,DF}(o, df[cols])
+    DFPerm{O, typeof(ords), typeof(df)}(ords, df)
 end
 
-DFPerm{O<:Base.Sort.Ordering,DF<:AbstractDataFrame}(o::O,  df::DF) = DFPerm{O,DF}(fill(o,ncol(df)), df)
-DFPerm{            DF<:AbstractDataFrame}(       df::DF) = DFPerm(Base.Sort.Forward, df)
+DFPerm(o::Ordering, df::AbstractDataFrame) = DFPerm(fill(o,ncol(df)), df)
+DFPerm(             df::AbstractDataFrame) = DFPerm(Sort.Forward, df)
 
 function Base.Sort.lt(o::DFPerm, a, b)
     for i = 1:ncol(o.df)
@@ -1720,9 +1709,86 @@ function Base.Sort.lt(o::DFPerm, a, b)
     false
 end
 
-Base.sortperm(df::AbstractDataFrame, a::Base.Sort.Algorithm, o::Union(Perm,DFPerm)) = sort!([1:nrow(df)], a, o)
-Base.sortperm(df::AbstractDataFrame, a::Base.Sort.Algorithm, o::Base.Sort.Ordering) = sortperm(df, a, DFPerm(o,df))
-Base.sort    (df::AbstractDataFrame, a::Base.Sort.Algorithm, o::Base.Sort.Ordering) = df[sortperm(df, a, o),:]
+function df_ord(df::AbstractDataFrame; kwargs...)
+    # Default ordering info
+
+    lt = isless
+    by = identity
+    rev = false
+    order = Forward
+
+    # Override defaults
+
+    for (k,v) in kwargs
+        if k == :col || k == :cols
+            break
+        elseif k == :lt;    lt    = v
+        elseif k == :by;    by    = v
+        elseif k == :rev;   rev   = v
+        elseif k == :order; order = v
+        else
+            error("Unknown keyword argument: ", string(k))
+        end
+    end
+
+    # Collect per-column ordering info
+
+    cols = Int[]
+    ords = Ordering[]
+
+    _lt = lt
+    _by = by
+    _rev = rev
+    _order = order
+
+    for (k,v) in kwargs
+        if k == :col || k == :cols
+            o = ord(_lt, _by, _rev, _order)
+            while length(cols) > length(ords)
+                push!(ords, o)
+            end
+            if k == :col
+                push!(cols, df.colindex[v])
+            else
+                append!(cols, [df.colindex[w] for w in v])
+            end
+
+            # reset to default values
+            _lt = lt
+            _by = by
+            _rev = rev
+            _order = order
+
+        elseif k == :lt;    _lt    = v
+        elseif k == :by;    _by    = v
+        elseif k == :rev;   _rev   = v
+        elseif k == :order; _order = v
+        else
+            error("Unknown keyword argument: ", string(k))
+        end
+    end
+    o = ord(_lt, _by, _rev, _order)
+    while length(cols) > length(ords)
+        push!(ords, o)
+    end
+
+    if length(cols) == 0
+        return DFPerm(ord(lt, by, rev, order), df)
+    end
+
+    if length(cols) == 1
+        return Perm(ords[1], df[cols[1]])
+    end
+
+    return DFPerm(ords, df[cols])
+end
+
+# sort!, sort, and sortperm functions
+
+for s in {:sort!, :sort, :sortperm}
+    @eval $s(df::AbstractDataFrame; alg::Algorithm=defalg(df), kwargs...) =
+                  $s(df, alg, df_ord(df; kwargs...))
+end
 
 function Base.sort!(df::AbstractDataFrame, a::Base.Sort.Algorithm, o::Base.Sort.Ordering)
     p = sortperm(df, a, o)
@@ -1734,36 +1800,50 @@ function Base.sort!(df::AbstractDataFrame, a::Base.Sort.Algorithm, o::Base.Sort.
     df
 end
 
-for s in {:sort!, :sort, :sortperm}
-    @eval begin
-        $s{O<:Base.Sort.Ordering}(df::AbstractDataFrame, ::Type{O})   = $s(df, DF_STABLE_SORT, O())
-        $s             (df::AbstractDataFrame, o::Base.Sort.Ordering) = $s(df, DF_STABLE_SORT, o)
-        $s             (df::AbstractDataFrame             ) = $s(df, Base.Sort.Forward)
-    end
-end
-
-for (sb,s) in {(:sortby!, :sort!), (:sortby, :sort)}
-    @eval begin
-        $sb(df::AbstractDataFrame, by::Function) = $s(df,By(by))
-
-        $sb{O<:Base.Sort.Ordering}(df::AbstractDataFrame, col::ColumnIndex, ::Type{O})   = $s(df,Perm(O(),df[col]))
-        $sb             (df::AbstractDataFrame, col::ColumnIndex, o::Base.Sort.Ordering) = $s(df,Perm(o,df[col]))
-        $sb             (df::AbstractDataFrame, col::ColumnIndex)              = $sb(df,col,Base.Sort.Forward)
-
-        $sb{O<:Base.Sort.Ordering}(df::AbstractDataFrame, cols::ColIndexVec, ::Type{O})   = $s(df,DFPerm(O(),df[cols]))
-        $sb             (df::AbstractDataFrame, cols::ColIndexVec, o::Base.Sort.Ordering) = $s(df,DFPerm(o,  df[cols]))
-        $sb             (df::AbstractDataFrame, cols::ColIndexVec)              = $sb(df,cols,Base.Sort.Forward)
-
-        $sb{O<:Base.Sort.Ordering}(df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray{O})             = $s(df,DFPerm(o, df[cols]))
-        $sb             (df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray{DataType}) = $s(df,DFPerm(Base.Sort.Ordering[O() for O in o], df[cols]))
-        $sb             (df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray)                = $sb(df,cols,DataType[ot for ot in o])
-        $sb             (df::AbstractDataFrame, col_ord::AbstractArray{Tuple}) = ((cols,o) = zip(col_ord...); $sb(df, [cols...], [o...]))
-    end
-end
+sort    (df::AbstractDataFrame, a::Algorithm, o::Ordering) = df[sortperm(df, a, o),:]
+sortperm(df::AbstractDataFrame, a::Algorithm, o::Union(Perm,DFPerm)) = sort!([1:nrow(df)], a, o)
+sortperm(df::AbstractDataFrame, a::Algorithm, o::Ordering) = sortperm(df, a, DFPerm(o,df))
 
 # Extras to speed up sorting
-Base.sortperm{V}(d::AbstractDataFrame, a::Base.Sort.Algorithm, o::FastPerm{Base.Sort.ForwardOrdering,V}) = sortperm(o.vec)
-Base.sortperm{V}(d::AbstractDataFrame, a::Base.Sort.Algorithm, o::FastPerm{Base.Sort.ReverseOrdering,V}) = reverse(sortperm(o.vec))
+sortperm{V}(d::AbstractDataFrame, a::Algorithm, o::FastPerm{Sort.ForwardOrdering,V}) = sortperm(o.vec)
+sortperm{V}(d::AbstractDataFrame, a::Algorithm, o::FastPerm{Sort.ReverseOrdering,V}) = reverse(sortperm(o.vec))
+
+## Deprecated; remove after julia v0.3 is released
+
+typealias ColIndexVec Union(AbstractVector{Integer}, AbstractVector{ASCIIString}, AbstractVector{UTF8String}, AbstractVector{Symbol})
+
+@deprecate sort!(df::AbstractDataFrame, o::Ordering)  sort!(df,order=o)
+@deprecate sort(df::AbstractDataFrame, o::Ordering)  sort(df,order=o)
+@deprecate sortperm(df::AbstractDataFrame, o::Ordering)  sortperm(df, order=o)
+
+@deprecate sortby!(df::AbstractDataFrame, by::Function)  sort!(df,by=by)
+
+@deprecate sortby!(df::AbstractDataFrame, col ::ColumnIndex, o::Ordering)  sort!(df,col=col,order=o)
+@deprecate sortby!(df::AbstractDataFrame, col ::ColumnIndex)               sort!(df,col=col)
+@deprecate sortby!(df::AbstractDataFrame, cols::ColIndexVec, o::Ordering)  sort!(df,cols=cols,order=o)
+@deprecate sortby!(df::AbstractDataFrame, cols::ColIndexVec)               sort!(df,cols=cols)
+@deprecate sortby(df::AbstractDataFrame, col ::ColumnIndex, o::Ordering)  sort(df,col=col,order=o)
+@deprecate sortby(df::AbstractDataFrame, col ::ColumnIndex)               sort(df,col=col)
+@deprecate sortby(df::AbstractDataFrame, cols::ColIndexVec, o::Ordering)  sort(df,cols=cols,order=o)
+@deprecate sortby(df::AbstractDataFrame, cols::ColIndexVec)               sort(df,cols=cols)
+
+#@deprecate sort!   {O<:Ordering}(df::AbstractDataFrame, ::Type{O})    sort!   (df, order=O())
+#@deprecate sort    {O<:Ordering}(df::AbstractDataFrame, ::Type{O})    sort    (df, order=O())
+#@deprecate sortperm{O<:Ordering}(df::AbstractDataFrame, ::Type{O})    sortperm(df, order=O())
+
+#@deprecate sortby!{O<:Ordering}(df::AbstractDataFrame, col::ColumnIndex, ::Type{O})                   sort!(df,col=col,order=O())
+#@deprecate sortby!{O<:Ordering}(df::AbstractDataFrame, cols::ColIndexVec, ::Type{O})                  sort!(df,cols=cols,order=O())
+#@deprecate sortby!{O<:Ordering}(df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray{O})        sort!(df,DFPerm(o, df[cols]))
+#@deprecate sortby {O<:Ordering}(df::AbstractDataFrame, col::ColumnIndex, ::Type{O})                   sort (df,col=col,order=O())
+#@deprecate sortby {O<:Ordering}(df::AbstractDataFrame, cols::ColIndexVec, ::Type{O})                  sort (df,cols=cols,order=O())
+#@deprecate sortby {O<:Ordering}(df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray{O})        sort (df,DFPerm(o, df[cols]))
+
+#@deprecate sortby!             (df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray{DataType}) sort!(df,DFPerm(Ordering[O() for O in o], df[cols]))
+#           sortby!             (df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray)           sortby!(df,cols,DataType[ot for ot in o])
+#           sortby!             (df::AbstractDataFrame, col_ord::AbstractArray{Tuple}) = ((cols,o) = zip(col_ord...); sortby!(df, [cols...], [o...]))
+#@deprecate sortby              (df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray{DataType}) sort (df,DFPerm(Ordering[O() for O in o], df[cols]))
+#           sortby              (df::AbstractDataFrame, cols::ColIndexVec, o::AbstractArray)           sortby!(df,cols,DataType[ot for ot in o])
+#           sortby              (df::AbstractDataFrame, col_ord::AbstractArray{Tuple}) = ((cols,o) = zip(col_ord...); sortby!(df, [cols...], [o...]))
 
 # reorder! for factors by specifying a DataFrame
 function DataArrays.reorder(fun::Function, x::PooledDataArray, df::AbstractDataFrame)
