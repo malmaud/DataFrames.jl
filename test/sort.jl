@@ -15,14 +15,14 @@ let
 	@assert isequal(sort(dv1), DataArray(sort(pdv1)))
 	@assert isequal(sort(dv1), DataArray(sort(idv1)))
 
-	d = @DataFrame(dv1 => dv1, dv2 => dv2, dv3 => dv3, pdv1 => pdv1, idv1 => idv1)
+	d = DataFrame(dv1 = dv1, dv2 = dv2, dv3 = dv3, pdv1 = pdv1, idv1 = idv1)
 
 	@assert sortperm(d) == sortperm(dv1)
 	@assert sortperm(d[["dv3","dv1"]]) == sortperm(dv3)
-	@assert sortby(d, "dv1")["dv3"] == sortperm(dv1)
-	@assert sortby(d, "dv2")["dv3"] == sortperm(dv1)
-	@assert sortby(d, "pdv1")["dv3"] == sortperm(dv1)
-	@assert sortby(d, "idv1")["dv3"] == sortperm(dv1)
-	@assert sortby(d, ["dv1","pdv1"])["dv3"] == sortperm(dv1)
-	@assert sortby(d, ["dv1","dv3"])["dv3"] == sortperm(dv1)
+	@assert sort(d, cols="dv1")["dv3"] == sortperm(dv1)
+	@assert sort(d, cols="dv2")["dv3"] == sortperm(dv1)
+	@assert sort(d, cols="pdv1")["dv3"] == sortperm(dv1)
+	@assert sort(d, cols="idv1")["dv3"] == sortperm(dv1)
+	@assert sort(d, cols=["dv1","pdv1"])["dv3"] == sortperm(dv1)
+	@assert sort(d, cols=["dv1","dv3"])["dv3"] == sortperm(dv1)
 end
