@@ -36,7 +36,7 @@ const DEFAULT_COLUMN_TYPE = Float64
 importall Base
 importall Stats
 import Base: Sort, Order
-import Base.Sort: sort, sort!, Algorithm, defalg
+import Base.Sort: sort, sort!, Algorithm, defalg, issorted
 import Base.Order: Ordering, By, Lt, Perm, Forward, lt, ord
 import Base.AsyncStream
 
