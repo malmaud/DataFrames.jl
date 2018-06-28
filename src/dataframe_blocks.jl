@@ -610,7 +610,7 @@ function writetable(filename::String, dt::DDataFrame, do_gather::Bool=false; kwa
     end
     f = open(filename, hdr[2] ? "a" : "w")
 
-    const lb = 1024*16
+    lb = 1024*16
     buff = Array(Uint8, lb)
     for fn in filenames
         fp = open(fn)
